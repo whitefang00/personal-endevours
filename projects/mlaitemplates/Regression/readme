@@ -1,0 +1,7 @@
+These are simple templates for machine learning algorithms. They currently work for one independent variables.  
+
+To change into multivariable models, edit the line 
+
+	X = dataset.iloc[:, 1:2].values 
+
+ Change the 2 to the index of your last independent variable column. If the last is the target/dependent variable, use  –1. 
