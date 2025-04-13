@@ -37,7 +37,8 @@ def process_table(table: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(res, ignore_index=True)
 
 
-def load_data(split_date: str = '2024-01-01', create_test_train_split=True):
+def load_data(split_date: str = '2024-01-01', create_test_train_split=True, top_skus= True,
+              paths:dict = {}):
     """
     Loads and preprocesses the training and validation datasets.
     
@@ -47,23 +48,43 @@ def load_data(split_date: str = '2024-01-01', create_test_train_split=True):
     Parameters:
         split_date (str): Date to split the dataset into training and testing.
         create_test_train_split (bool): Whether to return a split dataset or a full dataset.
-    
+        top_skus (bool): whether to return the top 20 skus or the whole list of skus present in the three tables
+        paths (dict): contains the path for the files 
+
     Returns:
         Tuple: (train_df, test_df, prod, sku_list) if split; otherwise (df, prod, sku_list).
     """
-    df = pd.read_csv('data/currated/train_data_daily_20211001_20241025.csv').drop(columns='Unnamed: 0')
-    prod = cu.clean_prod(pd.read_csv('data/raw/prod.csv'))
-    validate_df = pd.read_csv('data/currated/testing_data_daily_currated_20241015_20241215.csv').drop(['Unnamed: 0','cap','floor','per_unit_cost'],axis =1)
+    if not paths:
+        try:
+            df = pd.read_csv('data/currated/train_data_daily_20211001_20241025.csv').drop(columns='Unnamed: 0')
+            prod = cu.clean_prod(pd.read_csv('data/raw/prod.csv'))
+            validate_df = pd.read_csv('data/currated/testing_data_daily_currated_20241015_20241215.csv').drop(['Unnamed: 0','cap','floor','per_unit_cost'],axis =1)
+        except Exception as e:
+            print(e)
+            return None,None,None,None
+    else:
+        try:
+            df = pd.read_csv(paths['train_df']).drop(columns='Unnamed: 0')
+            prod = cu.clean_prod(pd.read_csv(paths['prod_df']))
+            validate_df  = pd.read_csv(paths['validate_df']).drop(['Unnamed: 0','cap','floor','per_unit_cost'],axis =1)
+        except Exception as e:
+            print(e)
+            return None, None,None,None
     
     validate_skus = validate_df['sku'].unique()
     prod_sku = prod['sku'].unique()
     current_skus = df[(df['sku'].isin(validate_skus)) & (df['sku'].isin(prod_sku))]['sku'].unique()
     
+    if top_skus:
     # Identify SKUs with highest sales in both training and validation datasets
-    sku_1 = validate_df[validate_df['sku'].isin(current_skus)].groupby('sku').agg({'sell_qty': 'sum'})
-    sku_2 = df[df['sku'].isin(current_skus)].groupby('sku').agg({'sell_qty': 'sum'})
-    sku_list = sku_1.nlargest(20, 'sell_qty').index.intersection(sku_2.nlargest(20, 'sell_qty').index)
-    
+        sku_1 = validate_df[validate_df['sku'].isin(current_skus)].groupby('sku').agg({'sell_qty': 'sum'})
+        sku_2 = df[df['sku'].isin(current_skus)].groupby('sku').agg({'sell_qty': 'sum'})
+        sku_list = sku_1.nlargest(20, 'sell_qty').index.intersection(sku_2.nlargest(20, 'sell_qty').index)
+    else:
+        sku_1 = validate_df[validate_df['sku'].isin(current_skus)].groupby('sku').agg({'sell_qty': 'sum'})
+        sku_2 = df[df['sku'].isin(current_skus)].groupby('sku').agg({'sell_qty': 'sum'})
+        sku_list = sku_1.nlargest(500, 'sell_qty').index.intersection(sku_2.nlargest(500, 'sell_qty').index)  
+        
     df = process_table(df).merge(prod, on='sku', how='left')
     
     if create_test_train_split:
@@ -101,7 +122,7 @@ def plot_predictions(train_df: pd.DataFrame, predictions: pd.DataFrame, model_ty
         plt.show()
 
 
-def train_models_advanced(train_data: pd.DataFrame, type: str, price: float, test_data: pd.DataFrame = None, split: bool = True):
+def train_models_advanced(train_data: pd.DataFrame, type: str, price: float, test_data: pd.DataFrame = None, split: bool = True,price_range=10):
     """
     Trains an XGBoost regression model for sales prediction.
     
@@ -111,13 +132,14 @@ def train_models_advanced(train_data: pd.DataFrame, type: str, price: float, tes
         price (float): Price range filter.
         test_data (pd.DataFrame): Test dataset (if applicable).
         split (bool): Whether to split data into training/testing sets.
+        price_range (int): allows us to manupilate the range of prices of the products used to model
     
     Returns:
         xgb.Booster: Trained XGBoost model.
     """
     # Filtering data by product type and price range
     train_data = train_data[(train_data['type'] == type) & 
-                            (train_data['per_unit_cost'].between(price - 10, price + 10))]
+                            (train_data['per_unit_cost'].between(price - price_range, price + price_range))]
     
     # Creating time-based features
     train_data['purchase_date'] = pd.to_datetime(train_data['purchase_date'])
